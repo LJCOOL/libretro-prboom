@@ -2216,7 +2216,11 @@ static void parent_dir_of(char *out, const char *dir, size_t n)
 
 /* Probe the wad-dir / system-dir / system-dir/prboom hierarchy for an
  * IWAD that matches the requested map kind.  The wad dir's parent is
- * checked right after the wad dir itself.  Returns a heap-allocated
+ * checked right after the wad dir itself.  A hit naming `exclude` (the
+ * content being loaded, when non-NULL) is skipped: a standalone game
+ * shipped with PWAD magic under an IWAD's name (some Freedoom builds)
+ * would otherwise be paired with itself, and every lump loaded twice
+ * crashes R_InitData.  Returns a heap-allocated
  * absolute path on first hit, NULL otherwise.  Uses the case-
  * insensitive helper so a DOOM.WAD on a Linux ext4 matches the
  * lowercase candidate name.
@@ -2224,7 +2228,7 @@ static void parent_dir_of(char *out, const char *dir, size_t n)
  * Candidate order within each kind mirrors d_main.c's standard_iwads[]
  * preference: official releases before freedoom fallbacks, common
  * names before rare ones. */
-static char *find_iwad_for_kind(pwad_map_kind_t kind)
+static char *find_iwad_for_kind(pwad_map_kind_t kind, const char *exclude)
 {
    static const char *const doom1_candidates[] = {
       "doom.wad", "doomu.wad", "freedoom1.wad", "freedoom.wad", "doom1.wad"
@@ -2244,6 +2248,8 @@ static char *find_iwad_for_kind(pwad_map_kind_t kind)
    size_t i;
    char *system_dir = NULL;
    char *prboom_subdir = NULL;
+   const char *dirs[4];
+   size_t d;
    char parent[sizeof(g_wad_dir)];
    char *hit;
 
@@ -2274,21 +2280,27 @@ static char *find_iwad_for_kind(pwad_map_kind_t kind)
          sprintf(prboom_subdir, "%s%c%s", system_dir, DIR_SLASH, "prboom");
    }
 
+   /* wad dir first -- the user-visible "load location"; then its
+    * parent -- IWADs beside a mod's folder; then system_dir/prboom --
+    * the canonical libretro IWAD stash; then system_dir directly --
+    * some users drop IWADs here. */
+   dirs[0] = g_wad_dir;
+   dirs[1] = parent[0] ? parent : NULL;
+   dirs[2] = prboom_subdir;
+   dirs[3] = (system_dir && *system_dir) ? system_dir : NULL;
+
    for (i = 0; i < list_n; i++)
-   {
-      /* wad dir first -- the user-visible "load location" */
-      if ((hit = FindFileInDir(g_wad_dir, list[i], NULL)))
+      for (d = 0; d < sizeof(dirs)/sizeof(dirs[0]); d++)
+      {
+         if (!dirs[d] || !(hit = FindFileInDir(dirs[d], list[i], NULL)))
+            continue;
+         if (exclude && !strcasecmp(hit, exclude))
+         {
+            free(hit);
+            continue;
+         }
          goto done;
-      /* its parent -- IWADs beside a mod's folder */
-      if (parent[0] && (hit = FindFileInDir(parent, list[i], NULL)))
-         goto done;
-      /* system_dir/prboom -- the canonical libretro IWAD stash */
-      if (prboom_subdir && (hit = FindFileInDir(prboom_subdir, list[i], NULL)))
-         goto done;
-      /* system_dir directly -- some users drop IWADs here */
-      if (system_dir && *system_dir && (hit = FindFileInDir(system_dir, list[i], NULL)))
-         goto done;
-   }
+      }
    hit = NULL;
 done:
    free(prboom_subdir);
@@ -2505,7 +2517,9 @@ static int collect_dir_patches(const char *dir, char **out, int max)
    {
       const char *de = retro_dirent_get_name(dh);
       const char *ext = de ? strrchr(de, '.') : NULL;
-      if (!ext || retro_dirent_is_dir(dh, NULL))
+      /* Dot files are hidden, and macOS writes a binary ._name
+       * AppleDouble file beside everything it copies to FAT. */
+      if (!ext || de[0] == '.' || retro_dirent_is_dir(dh, NULL))
          continue;
       if (strcasecmp(ext, ".deh") && strcasecmp(ext, ".bex"))
          continue;
@@ -2625,12 +2639,12 @@ bool retro_load_game(const struct retro_game_info *info)
                   kind = scan_pwad_map_kind(paths[j], &entry_header);
                }
             if (kind != PWAD_MAP_NONE)
-               iwad_match = find_iwad_for_kind(kind);
+               iwad_match = find_iwad_for_kind(kind, NULL);
             if (!iwad_match && kind != PWAD_MAP_HERETIC)
             {
-               iwad_match = find_iwad_for_kind(PWAD_MAP_DOOM2);
+               iwad_match = find_iwad_for_kind(PWAD_MAP_DOOM2, NULL);
                if (!iwad_match)
-                  iwad_match = find_iwad_for_kind(PWAD_MAP_DOOM1);
+                  iwad_match = find_iwad_for_kind(PWAD_MAP_DOOM1, NULL);
             }
             if (!iwad_match)
                for (j = 0; j < n; j++)
@@ -2666,6 +2680,9 @@ bool retro_load_game(const struct retro_game_info *info)
             for (j = 0; j < n; j++)
             {
                if (j == iwad_idx) continue;
+               /* The IWAD the search picked may itself be listed (a
+                * PWAD-magic game beside its add-ons): load it once. */
+               if (iwad_match && !strcasecmp(paths[j], iwad_match)) continue;
                if (kinds[j] == ENTRY_PWAD || kinds[j] == ENTRY_PWAD_PLAYPAL ||
                    kinds[j] == ENTRY_IWAD || kinds[j] == ENTRY_PK3)
                {
@@ -2785,7 +2802,7 @@ bool retro_load_game(const struct retro_game_info *info)
              * case). */
             pwad_map_kind_t kind = scan_pwad_map_kind(info->path, &header);
             char *iwad_match = (kind != PWAD_MAP_NONE)
-                               ? find_iwad_for_kind(kind) : NULL;
+                               ? find_iwad_for_kind(kind, info->path) : NULL;
 
             if (log_cb)
                log_cb(RETRO_LOG_INFO,
@@ -2812,9 +2829,9 @@ bool retro_load_game(const struct retro_game_info *info)
              * rather than silently mis-routing to DOOM. */
             if (!iwad_match && kind != PWAD_MAP_HERETIC)
             {
-               iwad_match = find_iwad_for_kind(PWAD_MAP_DOOM2);
+               iwad_match = find_iwad_for_kind(PWAD_MAP_DOOM2, info->path);
                if (!iwad_match)
-                  iwad_match = find_iwad_for_kind(PWAD_MAP_DOOM1);
+                  iwad_match = find_iwad_for_kind(PWAD_MAP_DOOM1, info->path);
             }
 
             if (iwad_match)
@@ -2879,9 +2896,9 @@ bool retro_load_game(const struct retro_game_info *info)
              * core does not support yet), so pair them with whatever IWAD
              * is findable.  ZDoom-targeted archives overwhelmingly assume
              * doom2.wad, so prefer the DOOM2 generation. */
-            char *iwad_match = find_iwad_for_kind(PWAD_MAP_DOOM2);
+            char *iwad_match = find_iwad_for_kind(PWAD_MAP_DOOM2, info->path);
             if (!iwad_match)
-               iwad_match = find_iwad_for_kind(PWAD_MAP_DOOM1);
+               iwad_match = find_iwad_for_kind(PWAD_MAP_DOOM1, info->path);
             if (iwad_match)
             {
                if (log_cb)

@@ -275,6 +275,19 @@ static int has(const char *argv, const char *needle)
    return strstr(hay, pin) != NULL;
 }
 
+/* Occurrences of `needle` in `argv`. */
+static int count(const char *argv, const char *needle)
+{
+   int n = 0;
+   const char *p = argv;
+   while ((p = strstr(p, needle)))
+   {
+      n++;
+      p += strlen(needle);
+   }
+   return n;
+}
+
 static void check(const char *name, int ok, const char *argv)
 {
    if (ok)
@@ -611,6 +624,47 @@ static void playlist_deh_parent_ignored(void)
    teardown();
 }
 
+/* A standalone game shipped with PWAD magic under an IWAD's name (some
+ * Freedoom builds): the name search must not pair it with itself. */
+static void single_pwad_named_as_iwad(void)
+{
+   char a[8192];
+   setup();
+   playpal_mod(P("%s/freedoom2.wad", R));
+   run_case(P("%s/freedoom2.wad", R), S, a, sizeof(a));
+   check("single_pwad_named_as_iwad",
+         has(a, "-iwad freedoom2.wad") && !strstr(a, "-file"), a);
+   teardown();
+}
+
+static void playlist_pwad_named_as_iwad(void)
+{
+   char a[8192];
+   setup();
+   mod_folder("freedoom2.wad\nmod.wad\n");
+   playpal_mod(P("%s/Mod/freedoom2.wad", R));
+   pwad(P("%s/Mod/mod.wad", R), "MAP01");
+   run_case(P("%s/Mod/Mod.m3u", R), S, a, sizeof(a));
+   check("playlist_pwad_named_as_iwad",
+         has(a, P("-iwad %s/Mod/freedoom2.wad -file %s/Mod/mod.wad", R, R))
+         && count(a, "freedoom2.wad") == 1, a);
+   teardown();
+}
+
+/* macOS leaves ._name AppleDouble files beside everything it copies. */
+static void playlist_deh_dotfiles_skipped(void)
+{
+   char a[8192];
+   setup();
+   deh_card("mod.wad\n");
+   write_text(P("%s/Mod/mod.deh", R), DEH);
+   write_text(P("%s/Mod/._mod.deh", R), "\x00\x05\x16\x07");
+   run_case(P("%s/Mod/Mod.m3u", R), S, a, sizeof(a));
+   check("playlist_deh_dotfiles_skipped",
+         has(a, P("-deh %s/Mod/mod.deh", R)) && !strstr(a, "._mod.deh"), a);
+   teardown();
+}
+
 int main(int argc, char **argv)
 {
    if (argc < 3)
@@ -643,6 +697,9 @@ int main(int argc, char **argv)
    playlist_deh_sorted_mixed();
    playlist_deh_listed_only();
    playlist_deh_parent_ignored();
+   single_pwad_named_as_iwad();
+   playlist_pwad_named_as_iwad();
+   playlist_deh_dotfiles_skipped();
 
    if (failures)
    {
