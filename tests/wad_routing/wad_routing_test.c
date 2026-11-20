@@ -552,6 +552,65 @@ static void playlist_nothing_found(void)
    teardown();
 }
 
+#define DEH "Patch File for DeHackEd v3.0\n"
+
+/* R/Mod with mod.wad (MAP01) beside an IWAD, listed by `m3u`. */
+static void deh_card(const char *m3u)
+{
+   freedoom(P("%s/freedoom2.wad", R), "freedoom2.wad");
+   mod_folder(m3u);
+   pwad(P("%s/Mod/mod.wad", R), "MAP01");
+}
+
+static void playlist_deh_any_name(void)
+{
+   char a[8192];
+   setup();
+   deh_card("mod.wad\n");
+   write_text(P("%s/Mod/dehacked.deh", R), DEH);
+   run_case(P("%s/Mod/Mod.m3u", R), S, a, sizeof(a));
+   check("playlist_deh_any_name", has(a, P("-deh %s/Mod/dehacked.deh", R)), a);
+   teardown();
+}
+
+static void playlist_deh_sorted_mixed(void)
+{
+   char a[8192];
+   setup();
+   deh_card("mod.wad\n");
+   write_text(P("%s/Mod/b.BEX", R), DEH);
+   write_text(P("%s/Mod/a.deh", R), DEH);
+   run_case(P("%s/Mod/Mod.m3u", R), S, a, sizeof(a));
+   check("playlist_deh_sorted_mixed",
+         has(a, P("-deh %s/Mod/a.deh %s/Mod/b.BEX", R, R)), a);
+   teardown();
+}
+
+static void playlist_deh_listed_only(void)
+{
+   char a[8192];
+   setup();
+   deh_card("mod.wad\na.deh\n");
+   write_text(P("%s/Mod/a.deh", R), DEH);
+   write_text(P("%s/Mod/b.deh", R), DEH);
+   run_case(P("%s/Mod/Mod.m3u", R), S, a, sizeof(a));
+   check("playlist_deh_listed_only",
+         has(a, P("-deh %s/Mod/a.deh", R)) && !strstr(a, "b.deh"), a);
+   teardown();
+}
+
+static void playlist_deh_parent_ignored(void)
+{
+   char a[8192];
+   setup();
+   deh_card("mod.wad\n");
+   write_text(P("%s/top.deh", R), DEH);
+   run_case(P("%s/Mod/Mod.m3u", R), S, a, sizeof(a));
+   check("playlist_deh_parent_ignored",
+         a[0] && !strstr(a, "top.deh"), a);
+   teardown();
+}
+
 int main(int argc, char **argv)
 {
    if (argc < 3)
@@ -580,6 +639,10 @@ int main(int argc, char **argv)
    playlist_order_kept();
    playlist_spaces_in_path();
    playlist_nothing_found();
+   playlist_deh_any_name();
+   playlist_deh_sorted_mixed();
+   playlist_deh_listed_only();
+   playlist_deh_parent_ignored();
 
    if (failures)
    {

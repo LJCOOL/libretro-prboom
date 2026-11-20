@@ -2481,6 +2481,45 @@ static int parse_m3u_playlist(const char *m3u_path,
    return n;
 }
 
+static int cmp_basename_casefold(const void *a, const void *b)
+{
+   const char *pa = *(const char *const *)a;
+   const char *pb = *(const char *const *)b;
+   const char *ba = strrchr(pa, DIR_SLASH);
+   const char *bb = strrchr(pb, DIR_SLASH);
+   return strcasecmp(ba ? ba + 1 : pa, bb ? bb + 1 : pb);
+}
+
+/* Every .deh / .bex file directly in `dir`, as heap paths sorted by
+ * file name without case.  Returns the count (at most `max`).  A mod
+ * folder's generated playlist lists only its WADs, so this is how its
+ * patches load whatever they are named. */
+static int collect_dir_patches(const char *dir, char **out, int max)
+{
+   struct RDIR *dh = retro_opendir(dir);
+   int n = 0;
+
+   if (!dh)
+      return 0;
+   while (n < max && retro_readdir(dh))
+   {
+      const char *de = retro_dirent_get_name(dh);
+      const char *ext = de ? strrchr(de, '.') : NULL;
+      if (!ext || retro_dirent_is_dir(dh, NULL))
+         continue;
+      if (strcasecmp(ext, ".deh") && strcasecmp(ext, ".bex"))
+         continue;
+      out[n] = malloc(strlen(dir) + 1 + strlen(de) + 1);
+      if (!out[n])
+         break;
+      sprintf(out[n], "%s%c%s", dir, DIR_SLASH, de);
+      n++;
+   }
+   retro_closedir(dh);
+   qsort(out, n, sizeof(*out), cmp_basename_casefold);
+   return n;
+}
+
 bool retro_load_game(const struct retro_game_info *info)
 {
    int argc = 0;
@@ -2659,6 +2698,34 @@ bool retro_load_game(const struct retro_game_info *info)
                }
                argv[argc++] = strdup(paths[j]);
             }
+         }
+         /* A playlist that lists no patch gets every patch in its own
+          * folder, sorted by name.  One that lists any keeps control. */
+         if (!deh_emitted)
+         {
+            /* Leave room for -baseconfig and the DEBUG -dehout pair. */
+            const int argv_cap = (int)(sizeof(load_argv) / sizeof(load_argv[0])) - 4;
+            char *dehs[M3U_MAX_ENTRIES];
+            int nd = collect_dir_patches(g_wad_dir, dehs, M3U_MAX_ENTRIES);
+            for (j = 0; j < nd; j++)
+            {
+               if (argc + 1 + !deh_emitted > argv_cap)
+               {
+                  if (log_cb)
+                     log_cb(RETRO_LOG_WARN,
+                            "retro_load_game: argument list full; "
+                            "not loading '%s' or later patches\n", dehs[j]);
+                  break;
+               }
+               if (!deh_emitted)
+               {
+                  argv[argc++] = strdup("-deh");
+                  deh_emitted = 1;
+               }
+               argv[argc++] = dehs[j];
+               dehs[j] = NULL;
+            }
+            for (j = 0; j < nd; j++) free(dehs[j]);
          }
          /* baseconfig lookup still runs against the m3u dir, mirroring
           * the single-WAD path: a per-playlist <name>.prboom.cfg
