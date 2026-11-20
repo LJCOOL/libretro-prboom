@@ -417,6 +417,141 @@ static void parent_search_one_level_only(void)
    teardown();
 }
 
+/* A mod folder R/Mod and the playlist Argon generates for it:
+ * R/Mod/Mod.m3u holding `m3u`. */
+static void mod_folder(const char *m3u)
+{
+   dir(P("%s/Mod", R));
+   write_text(P("%s/Mod/Mod.m3u", R), m3u);
+}
+
+static void playlist_no_iwad_doom2(void)
+{
+   char a[8192];
+   setup();
+   freedoom(P("%s/freedoom1.wad", R), "freedoom1.wad");
+   freedoom(P("%s/freedoom2.wad", R), "freedoom2.wad");
+   mod_folder("mod.wad\n");
+   pwad(P("%s/Mod/mod.wad", R), "MAP01");
+   run_case(P("%s/Mod/Mod.m3u", R), S, a, sizeof(a));
+   check("playlist_no_iwad_doom2",
+         has(a, P("-iwad %s/freedoom2.wad -file %s/Mod/mod.wad", R, R)), a);
+   teardown();
+}
+
+static void playlist_no_iwad_doom1(void)
+{
+   char a[8192];
+   setup();
+   freedoom(P("%s/freedoom1.wad", R), "freedoom1.wad");
+   freedoom(P("%s/freedoom2.wad", R), "freedoom2.wad");
+   mod_folder("ep.wad\n");
+   pwad(P("%s/Mod/ep.wad", R), "E1M1");
+   run_case(P("%s/Mod/Mod.m3u", R), S, a, sizeof(a));
+   check("playlist_no_iwad_doom1",
+         has(a, P("-iwad %s/freedoom1.wad -file %s/Mod/ep.wad", R, R)), a);
+   teardown();
+}
+
+static void playlist_markerless_pwad(void)
+{
+   char a[8192];
+   setup();
+   freedoom(P("%s/freedoom1.wad", R), "freedoom1.wad");
+   mod_folder("music.wad\n");
+   pwad(P("%s/Mod/music.wad", R), "D_RUNNIN");
+   run_case(P("%s/Mod/Mod.m3u", R), S, a, sizeof(a));
+   check("playlist_markerless_pwad",
+         has(a, P("-iwad %s/freedoom1.wad -file %s/Mod/music.wad", R, R)), a);
+   teardown();
+}
+
+static void playpal_mod(const char *path)
+{
+   static const char *const lumps[] = { "PLAYPAL", "MAP01" };
+   write_wad(path, "PWAD", lumps, 2);
+}
+
+static void playlist_playpal_addon(void)
+{
+   char a[8192];
+   setup();
+   freedoom(P("%s/freedoom2.wad", R), "freedoom2.wad");
+   mod_folder("tc.wad\n");
+   playpal_mod(P("%s/Mod/tc.wad", R));
+   run_case(P("%s/Mod/Mod.m3u", R), S, a, sizeof(a));
+   check("playlist_playpal_addon",
+         has(a, P("-iwad %s/freedoom2.wad -file %s/Mod/tc.wad", R, R)), a);
+   teardown();
+}
+
+static void playlist_playpal_standalone(void)
+{
+   char a[8192];
+   setup();
+   mod_folder("tc.wad\n");
+   playpal_mod(P("%s/Mod/tc.wad", R));
+   run_case(P("%s/Mod/Mod.m3u", R), S, a, sizeof(a));
+   check("playlist_playpal_standalone",
+         has(a, P("-iwad %s/Mod/tc.wad", R)) && !strstr(a, "-file"), a);
+   teardown();
+}
+
+static void playlist_listed_iwad_wins(void)
+{
+   char a[8192];
+   setup();
+   freedoom(P("%s/freedoom2.wad", R), "freedoom2.wad");
+   mod_folder("freedoom2.wad\nmod.wad\n");
+   freedoom(P("%s/Mod/freedoom2.wad", R), "freedoom2.wad");
+   pwad(P("%s/Mod/mod.wad", R), "MAP01");
+   run_case(P("%s/Mod/Mod.m3u", R), S, a, sizeof(a));
+   check("playlist_listed_iwad_wins",
+         has(a, P("-iwad %s/Mod/freedoom2.wad -file %s/Mod/mod.wad", R, R)), a);
+   teardown();
+}
+
+static void playlist_order_kept(void)
+{
+   char a[8192];
+   setup();
+   freedoom(P("%s/freedoom2.wad", R), "freedoom2.wad");
+   mod_folder("b.wad\na.wad\n");
+   pwad(P("%s/Mod/a.wad", R), "MAP01");
+   pwad(P("%s/Mod/b.wad", R), "MAP01");
+   run_case(P("%s/Mod/Mod.m3u", R), S, a, sizeof(a));
+   check("playlist_order_kept",
+         has(a, P("-file %s/Mod/b.wad %s/Mod/a.wad", R, R)), a);
+   teardown();
+}
+
+static void playlist_spaces_in_path(void)
+{
+   char a[8192];
+   setup();
+   freedoom(P("%s/freedoom2.wad", R), "freedoom2.wad");
+   dir(P("%s/Ancient Aliens", R));
+   write_text(P("%s/Ancient Aliens/Ancient Aliens.m3u", R), "aaliens.wad\n");
+   pwad(P("%s/Ancient Aliens/aaliens.wad", R), "MAP01");
+   run_case(P("%s/Ancient Aliens/Ancient Aliens.m3u", R), S, a, sizeof(a));
+   check("playlist_spaces_in_path",
+         has(a, P("-iwad %s/freedoom2.wad -file %s/Ancient Aliens/aaliens.wad",
+                  R, R)), a);
+   teardown();
+}
+
+static void playlist_nothing_found(void)
+{
+   char a[8192];
+   int rc;
+   setup();
+   mod_folder("mod.wad\n");
+   pwad(P("%s/Mod/mod.wad", R), "MAP01");
+   rc = run_case(P("%s/Mod/Mod.m3u", R), S, a, sizeof(a));
+   check("playlist_nothing_found", rc == -1, a);
+   teardown();
+}
+
 int main(int argc, char **argv)
 {
    if (argc < 3)
@@ -436,6 +571,15 @@ int main(int argc, char **argv)
    parent_search_before_sysdir();
    parent_search_uppercase();
    parent_search_one_level_only();
+   playlist_no_iwad_doom2();
+   playlist_no_iwad_doom1();
+   playlist_markerless_pwad();
+   playlist_playpal_addon();
+   playlist_playpal_standalone();
+   playlist_listed_iwad_wins();
+   playlist_order_kept();
+   playlist_spaces_in_path();
+   playlist_nothing_found();
 
    if (failures)
    {

@@ -2346,8 +2346,11 @@ done:
 typedef enum
 {
    ENTRY_INVALID,
-   ENTRY_IWAD,    /* primary IWAD: header == "IWAD", or "PWAD" + PLAYPAL */
+   ENTRY_IWAD,    /* primary IWAD: header == "IWAD" */
    ENTRY_PWAD,    /* genuine add-on PWAD */
+   ENTRY_PWAD_PLAYPAL, /* PWAD carrying a PLAYPAL: an add-on with its own
+                        * palette (Dwelling, vesper) or a standalone game
+                        * (chex.wad); routing decides which */
    ENTRY_PK3,     /* PK3/ZIP archive add-on */
    ENTRY_DEH      /* DeHackEd / BEX patch */
 } entry_kind_t;
@@ -2375,7 +2378,7 @@ static entry_kind_t classify_entry(const char *path)
    if (!strncmp(header.identification, "PWAD", 4))
    {
       if (wad_contains_playpal(path, &header))
-         return ENTRY_IWAD;
+         return ENTRY_PWAD_PLAYPAL;
       return ENTRY_PWAD;
    }
    return ENTRY_INVALID;
@@ -2558,6 +2561,7 @@ bool retro_load_game(const struct retro_game_info *info)
          entry_kind_t kinds[M3U_MAX_ENTRIES];
          int n = parse_m3u_playlist(info->path, paths, kinds, M3U_MAX_ENTRIES);
          int j, iwad_idx = -1, file_emitted = 0, deh_emitted = 0;
+         char *iwad_match = NULL;
          if (n < 0)
          {
             I_Error("retro_load_game: couldn't open m3u playlist '%s'",
@@ -2566,11 +2570,44 @@ bool retro_load_game(const struct retro_game_info *info)
          }
          for (j = 0; j < n; j++)
             if (kinds[j] == ENTRY_IWAD) { iwad_idx = j; break; }
+         /* No true IWAD listed (a mod folder's generated playlist lists
+          * only the mod): pick one the way the single-PWAD path does.
+          * The first add-on with map markers sets the generation; a
+          * miss tries the other one, except for Heretic.  Only when no
+          * IWAD is findable does a PLAYPAL-bearing entry stand in as
+          * the IWAD (chex.wad). */
          if (iwad_idx < 0)
          {
+            pwad_map_kind_t kind = PWAD_MAP_NONE;
+            for (j = 0; j < n && kind == PWAD_MAP_NONE; j++)
+               if (kinds[j] == ENTRY_PWAD || kinds[j] == ENTRY_PWAD_PLAYPAL)
+               {
+                  wadinfo_t entry_header = get_wadinfo(paths[j], NULL);
+                  kind = scan_pwad_map_kind(paths[j], &entry_header);
+               }
+            if (kind != PWAD_MAP_NONE)
+               iwad_match = find_iwad_for_kind(kind);
+            if (!iwad_match && kind != PWAD_MAP_HERETIC)
+            {
+               iwad_match = find_iwad_for_kind(PWAD_MAP_DOOM2);
+               if (!iwad_match)
+                  iwad_match = find_iwad_for_kind(PWAD_MAP_DOOM1);
+            }
+            if (!iwad_match)
+               for (j = 0; j < n; j++)
+                  if (kinds[j] == ENTRY_PWAD_PLAYPAL) { iwad_idx = j; break; }
+            if (log_cb)
+               log_cb(RETRO_LOG_INFO,
+                      "retro_load_game: m3u '%s' lists no IWAD; using %s\n",
+                      g_basename,
+                      iwad_match ? iwad_match :
+                      iwad_idx >= 0 ? paths[iwad_idx] : "(none found)");
+         }
+         if (!iwad_match && iwad_idx < 0)
+         {
             for (j = 0; j < n; j++) free(paths[j]);
-            I_Error("retro_load_game: m3u '%s' has no IWAD entry",
-                    info->path);
+            I_Error("retro_load_game: m3u '%s' has no IWAD entry and "
+                    "none was found", info->path);
             goto failed;
          }
          /* -iwad goes first.  Pass the full resolved path so the
@@ -2578,7 +2615,8 @@ bool retro_load_game(const struct retro_game_info *info)
           * basename alone would be ambiguous when the playlist
           * points at a custom location. */
          argv[argc++] = strdup("-iwad");
-         argv[argc++] = strdup(paths[iwad_idx]);
+         argv[argc++] = iwad_match ? iwad_match  /* heap from FindFileInDir */
+                                   : strdup(paths[iwad_idx]);
          /* Then -file with every PWAD, PK3/ZIP archive (and any extra
           * IWAD-shape entries beyond the first) in playlist order.  Before
           * the first archive, a ZDoom base resource (gzdoom.pk3/zdoom.pk3),
@@ -2589,8 +2627,8 @@ bool retro_load_game(const struct retro_game_info *info)
             for (j = 0; j < n; j++)
             {
                if (j == iwad_idx) continue;
-               if (kinds[j] == ENTRY_PWAD || kinds[j] == ENTRY_IWAD ||
-                   kinds[j] == ENTRY_PK3)
+               if (kinds[j] == ENTRY_PWAD || kinds[j] == ENTRY_PWAD_PLAYPAL ||
+                   kinds[j] == ENTRY_IWAD || kinds[j] == ENTRY_PK3)
                {
                   if (!file_emitted)
                   {
