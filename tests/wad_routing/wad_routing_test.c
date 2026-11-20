@@ -335,6 +335,88 @@ static void single_pwad_sidecar_deh(void)
    teardown();
 }
 
+/* `-iwad` followed by `path`, compared without case: on a
+ * case-insensitive filesystem the core may name the file in either. */
+static int has_iwad_ci(const char *argv, const char *path)
+{
+   char hay[8192], pin[4096];
+   size_t i, hn, pn;
+   snprintf(hay, sizeof(hay), " %s ", argv);
+   snprintf(pin, sizeof(pin), " -iwad %s ", path);
+   hn = strlen(hay);
+   pn = strlen(pin);
+   for (i = 0; i + pn <= hn; i++)
+      if (!strncasecmp(hay + i, pin, pn))
+         return 1;
+   return 0;
+}
+static void parent_search_doom2(void)
+{
+   char a[8192];
+   setup();
+   freedoom(P("%s/freedoom2.wad", R), "freedoom2.wad");
+   dir(P("%s/Mod", R));
+   pwad(P("%s/Mod/mod.wad", R), "MAP01");
+   run_case(P("%s/Mod/mod.wad", R), S, a, sizeof(a));
+   check("parent_search_doom2",
+         has(a, P("-iwad %s/freedoom2.wad -file %s/Mod/mod.wad", R, R)), a);
+   teardown();
+}
+
+static void parent_search_same_dir_first(void)
+{
+   char a[8192];
+   setup();
+   freedoom(P("%s/freedoom2.wad", R), "freedoom2.wad");
+   dir(P("%s/Mod", R));
+   freedoom(P("%s/Mod/freedoom2.wad", R), "freedoom2.wad");
+   pwad(P("%s/Mod/mod.wad", R), "MAP01");
+   run_case(P("%s/Mod/mod.wad", R), S, a, sizeof(a));
+   check("parent_search_same_dir_first",
+         has(a, P("-iwad %s/Mod/freedoom2.wad", R)), a);
+   teardown();
+}
+
+static void parent_search_before_sysdir(void)
+{
+   char a[8192];
+   setup();
+   freedoom(P("%s/freedoom2.wad", S), "freedoom2.wad");
+   freedoom(P("%s/freedoom2.wad", R), "freedoom2.wad");
+   dir(P("%s/Mod", R));
+   pwad(P("%s/Mod/mod.wad", R), "MAP01");
+   run_case(P("%s/Mod/mod.wad", R), S, a, sizeof(a));
+   check("parent_search_before_sysdir",
+         has(a, P("-iwad %s/freedoom2.wad", R)), a);
+   teardown();
+}
+
+static void parent_search_uppercase(void)
+{
+   char a[8192];
+   setup();
+   freedoom(P("%s/FREEDOOM2.WAD", R), "freedoom2.wad");
+   dir(P("%s/Mod", R));
+   pwad(P("%s/Mod/MOD.WAD", R), "MAP01");
+   run_case(P("%s/Mod/MOD.WAD", R), S, a, sizeof(a));
+   check("parent_search_uppercase",
+         has_iwad_ci(a, P("%s/FREEDOOM2.WAD", R)), a);
+   teardown();
+}
+
+static void parent_search_one_level_only(void)
+{
+   char a[8192];
+   setup();
+   freedoom(P("%s/freedoom2.wad", R), "freedoom2.wad");
+   dir(P("%s/Packs", R));
+   dir(P("%s/Packs/Mod", R));
+   pwad(P("%s/Packs/Mod/mod.wad", R), "MAP01");
+   run_case(P("%s/Packs/Mod/mod.wad", R), S, a, sizeof(a));
+   check("parent_search_one_level_only", !strstr(a, "-iwad"), a);
+   teardown();
+}
+
 int main(int argc, char **argv)
 {
    if (argc < 3)
@@ -349,6 +431,11 @@ int main(int argc, char **argv)
    single_pwad_doom2();
    single_pwad_doom1();
    single_pwad_sidecar_deh();
+   parent_search_doom2();
+   parent_search_same_dir_first();
+   parent_search_before_sysdir();
+   parent_search_uppercase();
+   parent_search_one_level_only();
 
    if (failures)
    {

@@ -2190,8 +2190,33 @@ static pwad_map_kind_t scan_pwad_map_kind(const char *path,
    return PWAD_MAP_NONE;
 }
 
+/* The folder one level above `dir`, without a trailing separator, or an
+ * empty string when there is none worth searching (no separator, or the
+ * parent would be the filesystem root).  A mod folder dropped beside the
+ * IWADs (Roms/DOOM/<Mod>/mod.wad) finds them here. */
+static void parent_dir_of(char *out, const char *dir, size_t n)
+{
+   size_t len;
+   char *sep;
+
+   strlcpy(out, dir, n);
+   len = strlen(out);
+   while (len > 1 && (out[len - 1] == '/' || out[len - 1] == '\\'))
+      out[--len] = '\0';
+   sep = strrchr(out, '/');
+   if (!sep)
+      sep = strrchr(out, '\\');
+   if (!sep || sep == out)
+   {
+      out[0] = '\0';
+      return;
+   }
+   *sep = '\0';
+}
+
 /* Probe the wad-dir / system-dir / system-dir/prboom hierarchy for an
- * IWAD that matches the requested map kind.  Returns a heap-allocated
+ * IWAD that matches the requested map kind.  The wad dir's parent is
+ * checked right after the wad dir itself.  Returns a heap-allocated
  * absolute path on first hit, NULL otherwise.  Uses the case-
  * insensitive helper so a DOOM.WAD on a Linux ext4 matches the
  * lowercase candidate name.
@@ -2219,6 +2244,7 @@ static char *find_iwad_for_kind(pwad_map_kind_t kind)
    size_t i;
    char *system_dir = NULL;
    char *prboom_subdir = NULL;
+   char parent[sizeof(g_wad_dir)];
    char *hit;
 
    if (kind == PWAD_MAP_DOOM1)
@@ -2239,6 +2265,7 @@ static char *find_iwad_for_kind(pwad_map_kind_t kind)
    else
       return NULL;
 
+   parent_dir_of(parent, g_wad_dir, sizeof(parent));
    environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir);
    if (system_dir && *system_dir)
    {
@@ -2251,6 +2278,9 @@ static char *find_iwad_for_kind(pwad_map_kind_t kind)
    {
       /* wad dir first -- the user-visible "load location" */
       if ((hit = FindFileInDir(g_wad_dir, list[i], NULL)))
+         goto done;
+      /* its parent -- IWADs beside a mod's folder */
+      if (parent[0] && (hit = FindFileInDir(parent, list[i], NULL)))
          goto done;
       /* system_dir/prboom -- the canonical libretro IWAD stash */
       if (prboom_subdir && (hit = FindFileInDir(prboom_subdir, list[i], NULL)))
@@ -2267,18 +2297,20 @@ done:
 
 /* Look for a ZDoom base-resource archive (gzdoom.pk3, then zdoom.pk3) in
  * the same places find_iwad_for_kind searches: next to the loaded content,
- * then system_dir/prboom, then system_dir.  ZDoom-targeted pk3s name stock
- * assets (decal graphics, sounds, the TEXTURES base, ...) that live in this
- * archive; pairing it in lets those resolve without the user wiring up an
- * autoload slot.  Returns a heap path (caller frees) or NULL if none found. */
+ * then its parent folder, then system_dir/prboom, then system_dir.
+ * ZDoom-targeted pk3s name stock assets (decal graphics, sounds, the
+ * TEXTURES base, ...) that live in this archive; pairing it in lets those
+ * resolve without the user wiring up an autoload slot.  Returns a heap path (caller frees) or NULL if none found. */
 static char *find_base_resource(void)
 {
    static const char *const candidates[] = { "gzdoom.pk3", "zdoom.pk3" };
    size_t i;
    char *system_dir = NULL;
    char *prboom_subdir = NULL;
+   char parent[sizeof(g_wad_dir)];
    char *hit;
 
+   parent_dir_of(parent, g_wad_dir, sizeof(parent));
    environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir);
    if (system_dir && *system_dir)
    {
@@ -2290,6 +2322,8 @@ static char *find_base_resource(void)
    for (i = 0; i < sizeof(candidates)/sizeof(candidates[0]); i++)
    {
       if ((hit = FindFileInDir(g_wad_dir, candidates[i], NULL)))
+         goto done;
+      if (parent[0] && (hit = FindFileInDir(parent, candidates[i], NULL)))
          goto done;
       if (prboom_subdir &&
           (hit = FindFileInDir(prboom_subdir, candidates[i], NULL)))
