@@ -2845,6 +2845,21 @@ bool retro_load_game(const struct retro_game_info *info)
    argv[argc++] = strdup("-");
 #endif
 
+   /* The engine's whole view of this load: which IWAD, add-ons and
+    * patches it gets.  tests/wad_routing asserts against this line. */
+   if (log_cb)
+   {
+      char line[4096];
+      int i;
+      strlcpy(line, "retro_load_game: argv:", sizeof(line));
+      for (i = 1; i < argc; i++)
+      {
+         strlcat(line, " ", sizeof(line));
+         strlcat(line, argv[i], sizeof(line));
+      }
+      log_cb(RETRO_LOG_INFO, "%s\n", line);
+   }
+
    myargc = argc;
    myargv = (const char **) argv;
 
